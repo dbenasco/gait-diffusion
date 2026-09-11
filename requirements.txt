@@ -1,0 +1,15 @@
+# Core scientific libraries
+numpy
+scipy
+matplotlib
+
+# Deep learning framework
+torch
+
+# SMPL model loading / forward kinematics
+smplx
+chumpy
+
+# Evaluation
+scikit-learn
+numba

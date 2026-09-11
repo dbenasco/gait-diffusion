@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Data and models (user-supplied, not part of the repo)
+data/
+models/
+generated_data/
+
+# Checkpoint / artifact files
+*.pth
+*.pt
+*.npy
+*.pkl
+
+# Misc
+.DS_Store
