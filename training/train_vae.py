@@ -1,9 +1,6 @@
 """
 Stage 1: Train the GaitVAE with UPDRS surrogate.
 
-Run on remote GPU:
-  python -m training.train_vae
-
 Output:
   models/vae.pth   — full VAE (encoder + decoder + surrogate)
 """
