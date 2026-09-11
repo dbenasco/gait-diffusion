@@ -42,8 +42,18 @@ gait-diffusion/
 pip install -r requirements.txt
 ```
 
-The SMPL model is required for forward kinematics. Place it at the path below
-(see Data layout).
+## SMPL model
+
+Forward kinematics requires the neutral SMPL body model (v1.1.0). Download it
+from https://smpl.is.tue.mpg.de/ (registration required) and place the `.pkl`
+at:
+
+```
+data/smpl_models/basicmodel_neutral_lbs_10_207_0_v1.1.0.pkl
+```
+
+The path is read from `SMPL_MODEL_PATH` in `config.py`. The model is loaded
+through `smplx`; see https://github.com/vchoutas/smplx for details.
 
 ## Data layout (expected on disk)
 
