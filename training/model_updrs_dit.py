@@ -65,26 +65,16 @@ class DiTBlock(nn.Module):
 
 
 class DiffusionTransformerUPDRS(nn.Module):
-    """
-    DiT model for UPDRS-conditioned gait generation.
-    Same architecture as DiffusionTransformerDiT but:
-    - No pulse conditioning channels (can be added later)
-    - UPDRS embedding (4 classes) instead of step_len embedding (2 classes)
+    """DiT for UPDRS-conditioned gait generation (AdaLN-Zero, CFG)."""
 
-    Laterality conditioning was removed (2026-07-20). The `laterality_emb`
-    parameter is kept as dead weight for strict checkpoint-loading backward
-    compat with all previously trained models. ``forward`` does NOT route any
-    signal through it — only `updrs_emb` is used. Retrain is required before
-    evaluating.
-    """
     def __init__(self, n_channels=10, seq_len=100, embed_dim=256, n_heads=4,
-                 n_layers=4, dropout=0.1, updrs_classes=4, stepsize_bins=0):
+                 n_layers=4, dropout=0.1, updrs_classes=4):
         super().__init__()
         self.n_channels = n_channels
         self.seq_len = seq_len
         self.embed_dim = embed_dim
 
-        # 1. Input Projection (joints only — no pulse channels)
+        # 1. Input Projection
         self.input_proj = nn.Linear(n_channels, embed_dim)
 
         # 2. Positional Encoding
@@ -101,20 +91,7 @@ class DiffusionTransformerUPDRS(nn.Module):
         # 4. UPDRS-gait Embedding (0=normal, 1=mild, 2=moderate, 3=severe)
         self.updrs_emb = nn.Embedding(updrs_classes, embed_dim)
 
-        # 5. Laterality Embedding — dead weight, kept for strict-checkpoint
-        #    backward compat. forward() does NOT route any signal through it.
-        #    Newly-saved checkpoints will still contain this parameter but it
-        #    receives no gradients in the current training setup.
-        self.laterality_emb = nn.Embedding(3, embed_dim)
-
-        # 5b. Stepsize Embedding (step length bin). Created only when
-        #     stepsize_bins > 0, so old checkpoints load with strict=False.
-        if stepsize_bins > 0:
-            self.stepsize_emb = nn.Embedding(stepsize_bins, embed_dim)
-        else:
-            self.stepsize_emb = None
-
-        # 6. CFG Null Embedding (drops the UPDRS conditioning axis)
+        # 5. CFG Null Embedding (drops the UPDRS conditioning axis)
         self.null_cond_emb = nn.Parameter(torch.randn(1, embed_dim) * 0.02)
 
         # 6. DiT Blocks
@@ -151,31 +128,23 @@ class DiffusionTransformerUPDRS(nn.Module):
         nn.init.constant_(self.adaLN_modulation_final[-1].bias, 0)
 
         # Normal init for conditioning embeddings
-        nn.init.normal_(self.updrs_emb.weight,      std=0.02)
-        nn.init.normal_(self.laterality_emb.weight, std=0.02)
-        if self.stepsize_emb is not None:
-            nn.init.normal_(self.stepsize_emb.weight, std=0.02)
+        nn.init.normal_(self.updrs_emb.weight, std=0.02)
 
     def forward(self, x, t, phys_cond=None, drop_phys=False):
         """
-        x:         (batch, Channels, Time) — noisy joints
+        x:         (batch, Channels, Time) — noisy latents
         t:         (Batch,) — diffusion timesteps
-        phys_cond: dict with keys:
-                     'updrs'  LongTensor (B,) ∈ {0,1,2,3}
-        drop_phys: bool or BoolTensor (B,) — if True, replace phys_cond with null_cond_emb
+        phys_cond: dict with key 'updrs' LongTensor (B,) ∈ {0,1,2,3}
+        drop_phys: bool or BoolTensor (B,) — replace conditioning with null embedding
         """
         B = x.shape[0]
 
         # 1. Timestep embedding
         t_emb = self.time_mlp(t)  # (B, EmbedDim)
 
-        # 2. UPDRS conditioning (single axis — laterality removed)
+        # 2. UPDRS conditioning
         if phys_cond is not None and not (isinstance(drop_phys, bool) and drop_phys):
-            updrs_e  = self.updrs_emb(phys_cond['updrs'])   # (B, D)
-            phys_emb = updrs_e
-            if self.stepsize_emb is not None and 'stepsize' in phys_cond:
-                phys_emb = phys_emb + self.stepsize_emb(phys_cond['stepsize'])
-
+            phys_emb = self.updrs_emb(phys_cond['updrs'])   # (B, D)
             # Per-sample CFG dropout during training
             if isinstance(drop_phys, torch.Tensor):
                 drop_mask = drop_phys.view(B, 1)

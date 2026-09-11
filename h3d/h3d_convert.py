@@ -159,13 +159,6 @@ def positions_to_h3d(positions: np.ndarray) -> np.ndarray:
     return np.asarray(data, dtype=np.float32)                  # (T-1, 263)
 
 
-def smpl_to_h3d(pose_72: np.ndarray, trans: np.ndarray,
-                beta_10: np.ndarray) -> np.ndarray:
-    """(T,72)+(T,3)+(10,) -> HumanML3D features (T-1, 263)."""
-    positions = smpl_to_positions22(pose_72, trans, beta_10)   # (T,22,3)
-    return positions_to_h3d(positions)
-
-
 # ── Mirror augmentation (position space) ──────────────────────────────────────
 # L/R joint index pairs in the SMPL 22-joint order. Midline joints
 # (0 pelvis, 3 spine1, 6 spine2, 9 spine3, 12 neck, 15 head) are never swapped.
@@ -197,24 +190,3 @@ def mirror_positions22(positions: np.ndarray) -> np.ndarray:
     for a, b in POSITION_MIRROR_PAIRS:
         m[:, [a, b]] = m[:, [b, a]]
     return m
-
-
-if __name__ == "__main__":
-    # Smoke test on one CARE-PD walk.
-    import pickle, warnings
-    pkl = os.path.join(
-        os.path.dirname(os.path.dirname(os.path.dirname(_HERE))),
-        "data/carepd/doi-10.5683-sp3-twikmk/3DGait.pkl",
-    )
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        d = pickle.load(open(pkl, "rb"), encoding="latin1")
-    subj = next(iter(d)); wid = next(iter(d[subj])); w = d[subj][wid]
-    feat = smpl_to_h3d(np.asarray(w["pose"]), np.asarray(w["trans"]), np.asarray(w["beta"]))
-    print("feat shape:", feat.shape, "(expect (T-1, 263))")
-    print("any nan:", bool(np.isnan(feat).any()))
-    print("root_y (height) min/max:", feat[:, 3].min(), feat[:, 3].max())
-    # recover positions back and sanity-check stature
-    pos = mp.recover_from_ric(torch.from_numpy(feat).unsqueeze(0), N_JOINTS)[0].numpy()
-    stature = pos[:, :, 1].max() - pos[:, :, 1].min()
-    print("recovered vertical extent (m):", float(stature), "(expect ~1.5-1.9)")

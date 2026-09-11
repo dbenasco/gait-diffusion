@@ -55,7 +55,7 @@ def train():
     print("=" * 60)
 
     if not os.path.exists(TRAIN_DATA_PATH):
-        print(f"ERROR: {TRAIN_DATA_PATH} not found. Run preprocess_carepd.py first.")
+        print(f"ERROR: {TRAIN_DATA_PATH} not found. Run preprocessing.preprocess_carepd_h3d first.")
         return
 
     # Normalization from train split (sagittal channels for 6-ch; all 263 for H3D)

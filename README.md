@@ -19,9 +19,9 @@ gait-diffusion/
 ├── h3d_bridge.py                   # H3D -> anatomical angles / clinical metrics
 ├── h3d/                            # vendored HumanML3D conversion package
 ├── preprocessing/
-│   ├── preprocess_carepd.py        # subject-split loader + angle windowing
+│   ├── splits.py                   # fixed CARE-PD subject-level splits
 │   ├── preprocess_carepd_h3d.py    # CARE-PD SMPL -> H3D 263-dim windows
-│   └── compute_fullbody_targets.py # recompute ROM / arm-swing / trunk targets
+│   └── compute_rom_targets.py      # per-class ROM targets for the ROM loss
 ├── training/
 │   ├── vae_updrs.py                # VAE architecture + losses
 │   ├── train_vae.py                # Stage 1: VAE training
@@ -30,9 +30,9 @@ gait-diffusion/
 ├── generation/
 │   └── generate.py                 # Stage 3: generation
 └── evaluation/
-    ├── synthetic.py                # biomechanical fidelity (ROM / DTW / KNN)
-    ├── generalization.py           # TRTR / TSTR / TRTS
-    ├── distributional.py           # FID / MMD / precision-recall
+    ├── synthetic.py                # biomechanical (ROM / ROM error / DTW)
+    ├── generalization.py           # TRTR / TRTS (Random Forest on VAE latent)
+    ├── distributional.py           # LS-FID / MMD² / precision / recall / diversity
     └── gaitgen.py                  # AVE / AAMD / ASMD
 ```
 
@@ -86,7 +86,7 @@ variables (see `config.py`). The default model paths are:
 | `UPDRS_GEN_OUTPUT_PATH` | `generated_data/generated_gait_updrs_dit_h3d.npy` |
 
 The CARE-PD cohort pkl files must be preprocessed to the fixed subject splits
-(`*_fixed.pkl`) expected by `preprocessing/preprocess_carepd.py`.
+(`*_fixed.pkl`) expected by `preprocessing/splits.py`.
 
 ## Pipeline
 
@@ -96,14 +96,14 @@ Run all commands from the repository root.
 
 ```
 python -m preprocessing.preprocess_carepd_h3d
-python -m preprocessing.compute_fullbody_targets
+python -m preprocessing.compute_rom_targets   # optional: derives TARGET_ROM_DEG
 ```
 
 `preprocess_carepd_h3d.py` converts the CARE-PD SMPL sequences into HumanML3D
 (263-dim) windows and writes `train_gait_h3d.npy`, `eval_gait_h3d.npy`,
-`norm_params_h3d.pt`, and label/laterality/subject arrays under `data/carepd/`.
-`compute_fullbody_targets.py` recomputes the arm-swing and trunk-inclination
-targets used by the auxiliary losses.
+`norm_params_h3d.pt`, and the label arrays under `data/carepd/`.
+`compute_rom_targets.py` prints the per-class ROM targets used by the ROM loss
+(the values are already set in `config.py`).
 
 ### Stage 1 — VAE training
 
@@ -123,7 +123,7 @@ python -m training.train_dit
 ```
 
 Trains the Diffusion Transformer to denoise severity-conditioned latents with
-classifier-free guidance and an auxiliary ROM loss on the decoded output. Set
+classifier-free guidance and a ROM loss on the decoded output. Set
 `UPDRS_VAE_MODEL_PATH` to the Stage-1 VAE and `UPDRS_MODEL_PATH` to a suffixed
 output name.
 
@@ -141,9 +141,9 @@ trained models before generating.
 ### Evaluation
 
 ```
-python -m evaluation.synthetic        # ROM / DTW / diversity / KNN
-python -m evaluation.generalization   # TRTR / TSTR / TRTS
-python -m evaluation.distributional   # FID / MMD / precision-recall
+python -m evaluation.synthetic        # real/synth ROM, ROM error, DTW
+python -m evaluation.generalization   # TRTR / TRTS (Random Forest, VAE latent)
+python -m evaluation.distributional   # LS-FID / MMD² / precision / recall / diversity
 python -m evaluation.gaitgen          # AVE / AAMD / ASMD
 ```
 

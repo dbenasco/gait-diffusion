@@ -29,7 +29,6 @@ Requires:
 import os
 import sys
 import pickle
-import argparse
 import copyreg
 import types
 
@@ -120,10 +119,7 @@ copyreg._reconstructor = _copyreg_patched
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from config import (
-    CAREPD_RAW_DIR, CAREPD_LABELED_COHORTS, CAREPD_TARGET_FPS,
-    SMPL_MODEL_PATH, ANGLES_PATH, UPDRS_MAX_SCORE,
-)
+from config import SMPL_MODEL_PATH
 
 DEVICE = torch.device("cpu")
 
@@ -266,33 +262,6 @@ def _hip_angles(joints: torch.Tensor, hip_idx: int, knee_idx: int) -> torch.Tens
     return torch.stack([flex, abd], dim=-1)
 
 
-def extract_angles(pose_72: np.ndarray, beta_10: np.ndarray) -> np.ndarray:
-    """
-    SMPL FK → 8 geometric joint angles for one walk.
-
-    Returns (T, 8) float32 array, degrees:
-      [L_Hip_Flex, L_Hip_Abd, R_Hip_Flex, R_Hip_Abd,
-       L_Knee_Flex, R_Knee_Flex, L_Ankle_Flex, R_Ankle_Flex]
-    """
-    joints_np = smpl_joint_positions(pose_72, beta_10)   # (T, 24, 3)
-    joints    = torch.from_numpy(joints_np).float()       # keep in torch — avoids FakeCh contamination
-
-    l_hip  = _hip_angles(joints, _L_HIP,  _L_KNEE)       # (T, 2)
-    r_hip  = _hip_angles(joints, _R_HIP,  _R_KNEE)       # (T, 2)
-
-    l_knee = _flex_angle(joints[:, _L_HIP],   joints[:, _L_KNEE],  joints[:, _L_ANKLE])   # (T,)
-    r_knee = _flex_angle(joints[:, _R_HIP],   joints[:, _R_KNEE],  joints[:, _R_ANKLE])
-    l_ank  = _flex_angle(joints[:, _L_KNEE],  joints[:, _L_ANKLE], joints[:, _L_FOOT]) - 90.0
-    r_ank  = _flex_angle(joints[:, _R_KNEE],  joints[:, _R_ANKLE], joints[:, _R_FOOT]) - 90.0
-
-    out = torch.cat([
-        l_hip, r_hip,
-        l_knee.unsqueeze(1), r_knee.unsqueeze(1),
-        l_ank.unsqueeze(1),  r_ank.unsqueeze(1),
-    ], dim=1)                                              # (T, 8)
-    return out.numpy().astype(np.float32)
-
-
 # ── FPS resampling ────────────────────────────────────────────────────────────
 
 def resample(pose: np.ndarray, src_fps: float, tgt_fps: float) -> np.ndarray:
@@ -309,141 +278,3 @@ def resample(pose: np.ndarray, src_fps: float, tgt_fps: float) -> np.ndarray:
         out[:, d] = np.interp(x_new, x_old, pose[:, d])
     return out
 
-
-# ── Main ──────────────────────────────────────────────────────────────────────
-
-def process_cohort(cohort: str, max_walks: int = None) -> dict:
-    """
-    Process all walks in a cohort PKL.
-    Returns {subject_id: {walk_id: {'angles': (T, 8), 'updrs': int}}}.
-    """
-    pkl_path = os.path.join(CAREPD_RAW_DIR, f"{cohort}.pkl")
-    if not os.path.exists(pkl_path):
-        print(f"  {cohort}: PKL not found, skipping.")
-        return {}
-
-    import warnings
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", DeprecationWarning)
-        with open(pkl_path, 'rb') as f:
-            data = pickle.load(f, encoding='latin1')
-
-    result = {}
-    n_ok, n_skip, n_fail = 0, 0, 0
-    n_processed = 0
-
-    for subject_id, subject_walks in data.items():
-        sid = str(subject_id)
-        result[sid] = {}
-
-        for walk_id, walk in subject_walks.items():
-            wid = str(walk_id)
-
-            updrs = walk.get('UPDRS_GAIT')
-            if updrs is None:
-                n_skip += 1
-                continue
-
-            updrs = int(updrs)
-            if updrs > UPDRS_MAX_SCORE:
-                n_skip += 1
-                continue
-
-            if max_walks is not None and n_processed >= max_walks:
-                break
-
-            # Resample pose to target FPS before FK
-            pose = resample(walk['pose'], walk['fps'], CAREPD_TARGET_FPS)
-
-            try:
-                angles = extract_angles(pose, walk['beta'])
-            except Exception as e:
-                print(f"  FAIL [{sid}] {wid}: {e}")
-                n_fail += 1
-                continue
-
-            result[sid][wid] = {'angles': angles, 'updrs': updrs}
-            n_ok += 1
-            n_processed += 1
-
-            if n_ok % 50 == 0:
-                print(f"  [{cohort}] {n_ok} walks done...")
-
-        if max_walks is not None and n_processed >= max_walks:
-            break
-
-    print(f"  [{cohort}] done: {n_ok} ok, {n_skip} skipped, {n_fail} failed")
-    return result
-
-
-def main():
-    parser = argparse.ArgumentParser(
-        description="CARE-PD SMPL → geometric joint angles (Stage 1)"
-    )
-    parser.add_argument("--cohort", type=str, default=None,
-                        help="Restrict to one cohort (e.g. BMCLab)")
-    parser.add_argument("--test",   action="store_true",
-                        help="Process only first 10 walks per cohort")
-    args = parser.parse_args()
-
-    if not os.path.exists(SMPL_MODEL_PATH):
-        print(f"ERROR: SMPL model not found at {SMPL_MODEL_PATH}")
-        print("Download from https://smpl.is.tue.mpg.de/")
-        sys.exit(1)
-
-    cohorts   = [args.cohort] if args.cohort else list(CAREPD_LABELED_COHORTS)
-    max_walks = 10 if args.test else None
-
-    print("=" * 60)
-    print("CARE-PD SMPL → geometric angles  (Stage 1)")
-    print(f"  Cohorts   : {cohorts}")
-    print(f"  Target FPS: {CAREPD_TARGET_FPS}")
-    print(f"  Max walks : {max_walks or 'all'}")
-    print("=" * 60)
-
-    # Load existing output if present (to resume / merge)
-    if os.path.exists(ANGLES_PATH):
-        print(f"\nLoading existing angles from {ANGLES_PATH} (will merge)...")
-        with open(ANGLES_PATH, 'rb') as f:
-            all_angles = pickle.load(f)
-    else:
-        all_angles = {}
-
-    for cohort in cohorts:
-        print(f"\n── {cohort} ──")
-        cohort_result = process_cohort(cohort, max_walks)
-        all_angles[cohort] = cohort_result
-
-    os.makedirs(os.path.dirname(ANGLES_PATH), exist_ok=True)
-
-    def _sanitize(obj):
-        """Recursively convert ndarray subclasses (e.g. _Ch) and mismatched ndarrays to plain np.ndarray."""
-        # Check if it's an ndarray, a _Ch instance, or anything that thinks it's an ndarray
-        if (isinstance(obj, np.ndarray) or type(obj).__name__ in ["ndarray", "_Ch"]) and type(obj) is not np.ndarray:
-            return np.array(obj)
-        if isinstance(obj, dict):
-            return {k: _sanitize(v) for k, v in obj.items()}
-        if isinstance(obj, (list, tuple)):
-            return type(obj)(_sanitize(v) for v in obj)
-        return obj
-
-    # Restore original copyreg before saving so ndarray pickling works correctly.
-    copyreg._reconstructor = _copyreg_orig
-    with open(ANGLES_PATH, 'wb') as f:
-        pickle.dump(_sanitize(all_angles), f)
-    copyreg._reconstructor = _copyreg_patched
-
-
-    # Summary
-    total = sum(
-        len(walks)
-        for cohort_data in all_angles.values()
-        for walks in cohort_data.values()
-    )
-    print(f"\nSaved {total} walks → {ANGLES_PATH}")
-    print("=" * 60)
-    print("Run preprocess_carepd.py next to build training arrays.")
-
-
-if __name__ == "__main__":
-    main()
