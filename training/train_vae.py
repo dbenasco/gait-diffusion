@@ -5,7 +5,7 @@ Run on remote GPU:
   python -m training.train_vae
 
 Output:
-  models/gait_vae_updrs.pth   — full VAE (encoder + decoder + surrogate)
+  models/vae.pth   — full VAE (encoder + decoder + surrogate)
 """
 
 import os

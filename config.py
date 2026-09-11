@@ -34,12 +34,12 @@ FOLDS_DIR = os.path.join(REPO_ROOT, "data/carepd/doi-10.5683-sp3-twikmk/folds/UP
 # --- MODEL PATHS ---
 MODEL_PATH = os.environ.get(
     "UPDRS_MODEL_PATH",
-    os.path.join(REPO_ROOT, "models/gait_updrs_dit_lam03_rom0_weighted.pth"),
+    os.path.join(REPO_ROOT, "models/dit.pth"),
 )
-STATS_PATH = os.path.join(REPO_ROOT, "models/gait_updrs_dit_stats.pt")
+STATS_PATH = os.path.join(REPO_ROOT, "models/stats.pth")
 VAE_MODEL_PATH = os.environ.get(
     "UPDRS_VAE_MODEL_PATH",
-    os.path.join(REPO_ROOT, "models/gait_vae_updrs.pth"),
+    os.path.join(REPO_ROOT, "models/vae.pth"),
 )
 
 # --- GENERATION OUTPUT ---
@@ -250,10 +250,10 @@ H3D_LATENT_NORM_PARAMS_PATH = os.environ.get("UPDRS_LATENT_NORM_PARAMS",
     os.path.join(REPO_ROOT, "data/carepd/latent_norm_params_h3d.pt"))
 
 # --- H3D model / stats / generation paths ---
-H3D_MODEL_PATH      = os.path.join(REPO_ROOT, "models/gait_updrs_dit_h3d.pth")
+H3D_MODEL_PATH      = os.path.join(REPO_ROOT, "models/dit.pth")
 H3D_STATS_PATH      = os.environ.get("UPDRS_STATS_PATH",
-    os.path.join(REPO_ROOT, "models/gait_updrs_dit_h3d_stats.pt"))
-H3D_VAE_MODEL_PATH  = os.path.join(REPO_ROOT, "models/gait_vae_updrs_h3d.pth")
+    os.path.join(REPO_ROOT, "models/stats.pth"))
+H3D_VAE_MODEL_PATH  = os.path.join(REPO_ROOT, "models/vae.pth")
 H3D_GEN_OUTPUT_PATH = os.path.join(REPO_ROOT, "generated_data/generated_gait_updrs_dit_h3d.npy")
 
 # ----------------------------------------------------------------------------
