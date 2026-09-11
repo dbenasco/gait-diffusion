@@ -36,14 +36,12 @@ CLS_NAMES = {0: "Normal", 1: "Mild", 2: "Moderate", 3: "Severe"}
 FK_BATCH = 512
 
 
-# ── Feature extraction ────────────────────────────────────────────────────────
-
 def _joint_features(h3d_nct):
     """(N, 263, T) → (N, 132) per-joint temporal mean + std over 22 joints (metres)."""
     t = torch.from_numpy(np.ascontiguousarray(h3d_nct).astype(np.float32))
     chunks = [h3d_to_positions22(t[i:i + FK_BATCH].to(DEVICE)).cpu()
               for i in range(0, len(t), FK_BATCH)]
-    pos = torch.cat(chunks, dim=0).numpy()                    # (N, T, 22, 3)
+    pos = torch.cat(chunks, dim=0).numpy()
     mean3d = pos.mean(axis=1).reshape(len(h3d_nct), -1)
     std3d = pos.std(axis=1).reshape(len(h3d_nct), -1)
     return np.concatenate([mean3d, std3d], axis=1).astype(np.float64)
@@ -58,8 +56,6 @@ def _latents(data_nct, vae, mean_t, std_t, batch=64):
            for i in range(0, len(x), batch)]
     return torch.cat(mus, dim=0).mean(dim=-1).numpy().astype(np.float64)
 
-
-# ── Distributional metrics ────────────────────────────────────────────────────
 
 def _fid(real, synth, eps=1e-6):
     mu1, mu2 = real.mean(axis=0), synth.mean(axis=0)
@@ -139,8 +135,6 @@ def _bootstrap(real_nct, synth_nct, vae, mean_t, std_t, n_boots, rng, k_nn):
 def _fmt(vals):
     return f"{np.mean(vals):.4f} ± {np.std(vals):.3f}"
 
-
-# ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
     parser = argparse.ArgumentParser()

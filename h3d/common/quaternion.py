@@ -1,9 +1,6 @@
-# Copyright (c) 2018-present, Facebook, Inc.
-# All rights reserved.
-#
-# This source code is licensed under the license found in the
-# LICENSE file in the root directory of this source tree.
-#
+"""
+Quaternion helpers (vendored from HumanML3D) for rotation conversions.
+"""
 
 import torch
 import numpy as np
@@ -12,7 +9,6 @@ _EPS4 = np.finfo(float).eps * 4.0
 
 _FLOAT_EPS = np.finfo(float).eps
 
-# PyTorch-backed implementations
 def qinv(q):
     assert q.shape[-1] == 4, 'q must be a tensor of shape (*, 4)'
     mask = torch.ones_like(q)
@@ -41,7 +37,6 @@ def qmul(q, r):
 
     original_shape = q.shape
 
-    # Compute outer product
     terms = torch.bmm(r.view(-1, 4, 1), q.view(-1, 1, 4))
 
     w = terms[:, 0, 0] - terms[:, 1, 1] - terms[:, 2, 2] - terms[:, 3, 3]
@@ -63,7 +58,6 @@ def qrot(q, v):
     assert q.shape[:-1] == v.shape[:-1]
 
     original_shape = list(v.shape)
-    # print(q.shape)
     q = q.contiguous().view(-1, 4)
     v = v.contiguous().view(-1, 3)
 
@@ -123,8 +117,6 @@ def qeuler(q, order, epsilon=0, deg=True):
         return torch.stack((x, y, z), dim=1).view(original_shape)
 
 
-# Numpy-backed implementations
-
 def qmul_np(q, r):
     q = torch.from_numpy(q).contiguous().float()
     r = torch.from_numpy(r).contiguous().float()
@@ -177,7 +169,6 @@ def euler2quat(e, order, deg=True):
 
     e = e.view(-1, 3)
 
-    ## if euler angles in degrees
     if deg:
         e = e * np.pi / 180.
 
@@ -204,7 +195,6 @@ def euler2quat(e, order, deg=True):
         else:
             result = qmul(result, r)
 
-    # Reverse antipodal representation to have a non-negative "w"
     if order in ['xyz', 'yzx', 'zxy']:
         result *= -1
 
@@ -264,7 +254,6 @@ def euler_to_quaternion(e, order):
         else:
             result = qmul_np(result, r)
 
-    # Reverse antipodal representation to have a non-negative "w"
     if order in ['xyz', 'yzx', 'zxy']:
         result *= -1
 
@@ -348,7 +337,6 @@ def qpow(q0, t, dtype=torch.float):
     q0 = qnormalize(q0)
     theta0 = torch.acos(q0[..., 0])
 
-    ## if theta0 is close to zero, add epsilon to avoid NaNs
     mask = (theta0 <= 10e-10) * (theta0 >= -10e-10)
     theta0 = (1 - mask) * theta0 + mask * 10e-10
     v0 = q0[..., 1:] / torch.sin(theta0).view(-1, 1)
@@ -356,7 +344,7 @@ def qpow(q0, t, dtype=torch.float):
     if isinstance(t, torch.Tensor):
         q = torch.zeros(t.shape + q0.shape)
         theta = t.view(-1, 1) * theta0.view(1, -1)
-    else:  ## if t is a number
+    else:
         q = torch.zeros(q0.shape)
         theta = t * theta0
 

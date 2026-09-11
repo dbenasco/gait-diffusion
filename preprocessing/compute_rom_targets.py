@@ -32,8 +32,8 @@ def main():
                              np.load(EVAL_LABELS_PATH).ravel()]).astype(int)
 
     feat = torch.as_tensor(data, dtype=torch.float32)
-    leg_ang = h3d_to_angles(feat, sagittal_only=True)                      # (N, 6, T)
-    rom = (leg_ang.max(dim=-1).values - leg_ang.min(dim=-1).values).numpy()  # (N, 6)
+    leg_ang = h3d_to_angles(feat, sagittal_only=True)
+    rom = (leg_ang.max(dim=-1).values - leg_ang.min(dim=-1).values).numpy()
 
     print(f"{'':18}" + "".join(f"{'U' + str(c):>14}" for c in range(UPDRS_CLASSES)))
     per_class = []

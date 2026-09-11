@@ -30,31 +30,26 @@ import numpy as np
 import torch
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-# Put the vendored package root on sys.path so motion_process's
-# `from common.skeleton import ...` / `from utils.paramUtil import ...` resolve.
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
-import motion_process as mp                       # noqa: E402
-from common.skeleton import Skeleton              # noqa: E402
-from utils.paramUtil import (                     # noqa: E402
+import motion_process as mp
+from common.skeleton import Skeleton
+from utils.paramUtil import (
     t2m_raw_offsets, t2m_kinematic_chain,
 )
 
-# smpl_to_angles installs the chumpy stub on import and exposes the SMPL singleton.
-sys.path.insert(0, os.path.dirname(_HERE))        # repo root on path
-import smpl_to_angles as s2a                       # noqa: E402
+sys.path.insert(0, os.path.dirname(_HERE))
+import smpl_to_angles as s2a
 
-# ── T2M / HumanML3D skeleton constants (SMPL 22-joint order) ──────────────────
 N_JOINTS = 22
 FEATURE_DIM = 263
 FEET_THRE = 0.002
 
-# face_joint_indx order = [right hip, left hip, right shoulder, left shoulder]
 FACE_JOINT_INDX = [2, 1, 17, 16]
-FID_L = [7, 10]   # L_ankle, L_foot
-FID_R = [8, 11]   # R_ankle, R_foot
-L_IDX1, L_IDX2 = 5, 8   # leg joints used for the uniform-skeleton scale ratio
+FID_L = [7, 10]
+FID_R = [8, 11]
+L_IDX1, L_IDX2 = 5, 8
 
 _N_RAW_OFFSETS = torch.from_numpy(t2m_raw_offsets)
 
@@ -72,9 +67,9 @@ def _compute_tgt_offsets() -> torch.Tensor:
             body_pose=torch.zeros(1, 69),
             transl=torch.zeros(1, 3),
         )
-    rest = out.joints[:, :N_JOINTS, :].cpu().float()[0]   # (22, 3)
+    rest = out.joints[:, :N_JOINTS, :].cpu().float()[0]
     skel = Skeleton(_N_RAW_OFFSETS, t2m_kinematic_chain, "cpu")
-    return skel.get_offsets_joints(rest)                   # (22, 3)
+    return skel.get_offsets_joints(rest)
 
 
 def _install_globals():
@@ -95,7 +90,6 @@ def _install_globals():
     _globals_installed = True
 
 
-# SMPL 22-joint indices used only for the up/down sanity check below.
 _J_NECK, _J_HEAD = 12, 15
 _J_L_ANKLE, _J_R_ANKLE, _J_L_FOOT, _J_R_FOOT = 7, 8, 10, 11
 
@@ -154,23 +148,20 @@ def positions_to_h3d(positions: np.ndarray) -> np.ndarray:
     """(T, 22, 3) world joint positions -> HumanML3D features (T-1, 263)."""
     _install_globals()
     data = mp.process_file(positions.astype(np.float32), FEET_THRE)
-    if isinstance(data, tuple):           # process_file returns (data, glob, pos, lvel)
+    if isinstance(data, tuple):
         data = data[0]
-    return np.asarray(data, dtype=np.float32)                  # (T-1, 263)
+    return np.asarray(data, dtype=np.float32)
 
 
-# ── Mirror augmentation (position space) ──────────────────────────────────────
-# L/R joint index pairs in the SMPL 22-joint order. Midline joints
-# (0 pelvis, 3 spine1, 6 spine2, 9 spine3, 12 neck, 15 head) are never swapped.
 POSITION_MIRROR_PAIRS = [
-    (1, 2),    # hip
-    (4, 5),    # knee
-    (7, 8),    # ankle
-    (10, 11),  # foot
-    (13, 14),  # collar
-    (16, 17),  # shoulder
-    (18, 19),  # elbow
-    (20, 21),  # wrist
+    (1, 2),
+    (4, 5),
+    (7, 8),
+    (10, 11),
+    (13, 14),
+    (16, 17),
+    (18, 19),
+    (20, 21),
 ]
 
 

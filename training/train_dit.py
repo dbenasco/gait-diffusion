@@ -1,3 +1,13 @@
+"""
+Stage 2: train the latent Diffusion Transformer (DiT).
+
+Denoises UPDRS-class-conditioned VAE latents with classifier-free guidance and
+an auxiliary ROM loss on the decoded output. Run after `training.train_vae`.
+
+Usage:
+    python -m training.train_dit
+"""
+
 import torch
 import torch.nn.functional as F
 import torch.optim as optim
@@ -30,17 +40,9 @@ from config import (
 from h3d_bridge import h3d_to_angles
 
 
-# ============================================================
-# Noise schedule (same as existing pipeline)
-# ============================================================
-
 def get_noise_schedule(beta_start=1e-4, beta_end=0.02, n_steps=500):
     return torch.linspace(beta_start, beta_end, n_steps)
 
-
-# ============================================================
-# Full-body ROM supervision (per-class batch-mean L1 vs real targets)
-# ============================================================
 
 def compute_rom_loss(pred_z0, updrs_cls, cond_mask, vae, dataset, device):
     """
@@ -57,8 +59,8 @@ def compute_rom_loss(pred_z0, updrs_cls, cond_mask, vae, dataset, device):
     avg_mean_d = dataset.avg_mean.to(device).view(1, -1, 1)
     x_pred_deg = x_pred * avg_std_d + avg_mean_d
 
-    leg_ang = h3d_to_angles(x_pred_deg, sagittal_only=True)             # (B, 6, T)
-    pred_rom = leg_ang.max(dim=-1).values - leg_ang.min(dim=-1).values  # (B, 6)
+    leg_ang = h3d_to_angles(x_pred_deg, sagittal_only=True)
+    pred_rom = leg_ang.max(dim=-1).values - leg_ang.min(dim=-1).values
 
     rom_loss = zero
     n_cls = 0
@@ -74,10 +76,6 @@ def compute_rom_loss(pred_z0, updrs_cls, cond_mask, vae, dataset, device):
 
     return ROM_WEIGHT * rom_loss, rom_loss
 
-
-# ============================================================
-# Dataset
-# ============================================================
 
 class GaitDatasetUPDRS(Dataset):
     def __init__(self, tensor_data, labels, norm_stats=None):
@@ -96,15 +94,11 @@ class GaitDatasetUPDRS(Dataset):
         return len(self.data)
 
     def __getitem__(self, idx):
-        sample = self.data[idx]  # (C, T)
+        sample = self.data[idx]
         normalized = (sample - self.avg_mean.to(sample.device)) / self.avg_std.to(sample.device)
         normalized = torch.clamp(normalized, -4, 4)
         return normalized, {'updrs': self.updrs[idx]}
 
-
-# ============================================================
-# Generation (for evaluation checkpoints)
-# ============================================================
 
 @torch.no_grad()
 def generate_batch_updrs(model, vae, n_samples, device, phys_cond, scale=2.5,
@@ -116,7 +110,6 @@ def generate_batch_updrs(model, vae, n_samples, device, phys_cond, scale=2.5,
     alphas = 1.0 - betas
     alphas_cumprod = torch.cumprod(alphas, dim=0)
 
-    # Start from noise in latent space
     z = torch.randn(n_samples, LATENT_CHANNELS, LATENT_TIME).to(device)
 
     for i in reversed(range(TIMESTEPS)):
@@ -140,17 +133,12 @@ def generate_batch_updrs(model, vae, n_samples, device, phys_cond, scale=2.5,
         else:
             z = pred_z0
 
-    # Decode latent → angle space (still normalized)
     if lat_std is not None:
         z = z * lat_std
         if lat_mean is not None:
             z = z + lat_mean
     return vae.decode(z)
 
-
-# ============================================================
-# Training loop
-# ============================================================
 
 def train():
     print("=" * 60)
@@ -159,14 +147,13 @@ def train():
     print(f"  Angle space : (B, {N_CHANNELS}, {SEQ_LEN})")
     print("=" * 60)
 
-    # 1. Load processed data
     if not os.path.exists(TRAIN_DATA_PATH):
         print(f"ERROR: Train data not found at {TRAIN_DATA_PATH}")
         print("Run preprocessing.preprocess_carepd_h3d first.")
         return
     if not os.path.exists(VAE_MODEL_PATH):
         print(f"ERROR: VAE model not found at {VAE_MODEL_PATH}")
-        print("Run train_vae_updrs.py first.")
+        print("Run training.train_vae first.")
         return
 
     def _load_channels(path):
@@ -184,8 +171,6 @@ def train():
     for cls in range(UPDRS_CLASSES):
         print(f"  UPDRS {cls}: train={int((train_labels == cls).sum())}, eval={int((eval_labels == cls).sum())}")
 
-    # Inverse-frequency class weights: w_c = N_total / (n_classes * N_c)
-    # E[w] = 1 so loss magnitude is preserved; under-represented classes get w > 1.
     train_counts = torch.tensor(
         [float((train_labels == cls).sum()) for cls in range(UPDRS_CLASSES)],
         dtype=torch.float32,
@@ -193,11 +178,10 @@ def train():
     N_total = train_counts.sum()
     class_weights = (N_total / (UPDRS_CLASSES * train_counts)).to(DEVICE)
 
-    # 2. Dataset & loaders
     train_set = GaitDatasetUPDRS(train_tensor, train_labels)
     val_set = GaitDatasetUPDRS(eval_tensor, eval_labels,
                                norm_stats=(train_set.avg_mean, train_set.avg_std))
-    dataset = train_set  # reference for normalization stats
+    dataset = train_set
 
     train_loader = DataLoader(train_set, batch_size=BATCH_SIZE, shuffle=True)
     val_loader = DataLoader(val_set, batch_size=BATCH_SIZE, shuffle=False)
@@ -208,7 +192,6 @@ def train():
     torch.save(norm_params, NORM_PARAMS_PATH)
     print(f"📈 Normalization params saved to {STATS_PATH}")
 
-    # 3. Load frozen VAE
     print(f"\n🔒 Loading frozen VAE from {VAE_MODEL_PATH}")
     vae_state_dict = torch.load(VAE_MODEL_PATH, map_location=DEVICE)
     vae = GaitVAE(
@@ -223,7 +206,6 @@ def train():
         p.requires_grad_(False)
     print("✅ VAE frozen — encoder and decoder will not be updated")
 
-    # 4. DiT model — operates on latent (LATENT_CHANNELS, LATENT_TIME)
     print(f"\n Initializing Latent DiT (Dim: {EMBED_DIM}, Layers: {N_LAYERS}, Heads: {N_HEADS})")
     torch.cuda.empty_cache()
 
@@ -240,7 +222,6 @@ def train():
     total_params = sum(p.numel() for p in model.parameters())
     print(f"✅ Model on {DEVICE}. Total Params: {total_params / 1e6:.2f}M")
 
-    # Resume
     start_epoch = 0
     if RESUME_TRAINING and os.path.exists(MODEL_PATH):
         print(f"🔄 Resuming from: {MODEL_PATH}")
@@ -266,7 +247,6 @@ def train():
             print(f"    UPDRS {cls} : n={int(train_counts[cls])}  w={class_weights[cls].item():.3f}")
     print("=" * 60 + "\n")
 
-    # 4. Training loop
     best_val_loss = float('inf')
     best_epoch    = start_epoch
 
@@ -284,7 +264,6 @@ def train():
             curr_batch = x0.shape[0]
             drop_phys = torch.rand(curr_batch, device=DEVICE) < CFG_DROPOUT_PROB
 
-            # Encode to latent space with frozen VAE (sample z for regularization benefit)
             with torch.no_grad():
                 z0, _, _ = vae.encode(x0)
 
@@ -304,7 +283,7 @@ def train():
             per_sample_vel = ((pred_vel - real_vel) ** 2).mean(dim=(1, 2))
 
             if CLASS_WEIGHTED_LOSS:
-                sample_w = class_weights[updrs_cls]   # (B,) — w_c = N_total / (n_classes * N_c)
+                sample_w = class_weights[updrs_cls]
                 mse_loss = (sample_w * per_sample_mse).mean()
                 vel_loss = (sample_w * per_sample_vel).mean()
             else:
@@ -326,7 +305,6 @@ def train():
         scheduler.step()
         curr_lr = optimizer.param_groups[0]['lr']
 
-        # Validation
         model.eval()
         val_losses = []
         with torch.no_grad():

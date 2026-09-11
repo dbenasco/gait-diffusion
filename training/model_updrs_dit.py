@@ -1,3 +1,10 @@
+"""
+Diffusion Transformer (DiT) for UPDRS-conditioned latent gait generation.
+
+AdaLN-Zero conditioning on the UPDRS class embedding plus a null-condition
+embedding for classifier-free guidance.
+"""
+
 import torch
 import torch.nn as nn
 import math
@@ -47,16 +54,12 @@ class DiTBlock(nn.Module):
         self.drop = nn.Dropout(dropout)
 
     def forward(self, x, c):
-        # x: (Time, Batch, HiddenSize)
-        # c: (Batch, HiddenSize)
         shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.adaLN_modulation(c).chunk(6, dim=1)
 
-        # 1. Attention
         norm_x = modulate(self.norm1(x), shift_msa, scale_msa)
         attn_out, _ = self.attn(norm_x, norm_x, norm_x)
         x = x + gate_msa.unsqueeze(0) * self.drop(attn_out)
 
-        # 2. MLP
         norm_x = modulate(self.norm2(x), shift_mlp, scale_mlp)
         mlp_out = self.mlp(norm_x)
         x = x + gate_mlp.unsqueeze(0) * self.drop(mlp_out)
@@ -74,13 +77,10 @@ class DiffusionTransformerUPDRS(nn.Module):
         self.seq_len = seq_len
         self.embed_dim = embed_dim
 
-        # 1. Input Projection
         self.input_proj = nn.Linear(n_channels, embed_dim)
 
-        # 2. Positional Encoding
         self.pos_embed = nn.Parameter(torch.zeros(seq_len, 1, embed_dim))
 
-        # 3. Timestep Embedding
         self.time_mlp = nn.Sequential(
             SinusoidalPosEmbed(embed_dim),
             nn.Linear(embed_dim, embed_dim),
@@ -88,18 +88,14 @@ class DiffusionTransformerUPDRS(nn.Module):
             nn.Linear(embed_dim, embed_dim),
         )
 
-        # 4. UPDRS-gait Embedding (0=normal, 1=mild, 2=moderate, 3=severe)
         self.updrs_emb = nn.Embedding(updrs_classes, embed_dim)
 
-        # 5. CFG Null Embedding (drops the UPDRS conditioning axis)
         self.null_cond_emb = nn.Parameter(torch.randn(1, embed_dim) * 0.02)
 
-        # 6. DiT Blocks
         self.blocks = nn.ModuleList([
             DiTBlock(embed_dim, n_heads, dropout=dropout) for _ in range(n_layers)
         ])
 
-        # 7. Final Layer
         self.final_layer = nn.Sequential(
             nn.LayerNorm(embed_dim, elementwise_affine=False, eps=1e-6),
             nn.Linear(embed_dim, n_channels)
@@ -116,18 +112,15 @@ class DiffusionTransformerUPDRS(nn.Module):
             if p.dim() > 1:
                 nn.init.xavier_uniform_(p)
 
-        # Zero-init DiT block modulations (crucial for stability)
         for block in self.blocks:
             nn.init.constant_(block.adaLN_modulation[-1].weight, 0)
             nn.init.constant_(block.adaLN_modulation[-1].bias, 0)
 
-        # Zero-init final layer
         nn.init.constant_(self.final_layer[-1].weight, 0)
         nn.init.constant_(self.final_layer[-1].bias, 0)
         nn.init.constant_(self.adaLN_modulation_final[-1].weight, 0)
         nn.init.constant_(self.adaLN_modulation_final[-1].bias, 0)
 
-        # Normal init for conditioning embeddings
         nn.init.normal_(self.updrs_emb.weight, std=0.02)
 
     def forward(self, x, t, phys_cond=None, drop_phys=False):
@@ -139,37 +132,29 @@ class DiffusionTransformerUPDRS(nn.Module):
         """
         B = x.shape[0]
 
-        # 1. Timestep embedding
-        t_emb = self.time_mlp(t)  # (B, EmbedDim)
+        t_emb = self.time_mlp(t)
 
-        # 2. UPDRS conditioning
         if phys_cond is not None and not (isinstance(drop_phys, bool) and drop_phys):
-            phys_emb = self.updrs_emb(phys_cond['updrs'])   # (B, D)
-            # Per-sample CFG dropout during training
+            phys_emb = self.updrs_emb(phys_cond['updrs'])
             if isinstance(drop_phys, torch.Tensor):
                 drop_mask = drop_phys.view(B, 1)
                 phys_emb = torch.where(drop_mask, self.null_cond_emb.expand(B, -1), phys_emb)
         else:
             phys_emb = self.null_cond_emb.expand(B, -1)
 
-        # Combined condition vector for AdaLN
-        c = t_emb + phys_emb  # (B, EmbedDim)
+        c = t_emb + phys_emb
 
-        # 3. Prepare spatial inputs (no pulse concatenation)
-        x = x.permute(2, 0, 1)  # (T, B, Channels)
-        x = self.input_proj(x)   # (T, B, EmbedDim)
+        x = x.permute(2, 0, 1)
+        x = self.input_proj(x)
         x = x + self.pos_embed
 
-        # 4. DiT Blocks
         for block in self.blocks:
             x = block(x, c)
 
-        # 5. Final layer modulation and projection
         shift, scale = self.adaLN_modulation_final(c).chunk(2, dim=1)
         x = modulate(self.final_layer[0](x), shift, scale)
-        x = self.final_layer[1](x)  # (T, B, n_channels)
+        x = self.final_layer[1](x)
 
-        # Revert layout
-        x = x.permute(1, 2, 0)  # (B, n_channels, T)
+        x = x.permute(1, 2, 0)
 
         return x

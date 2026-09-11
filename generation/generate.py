@@ -63,7 +63,6 @@ def main():
             print(f"ERROR: {path} not found.")
             return
 
-    # Load frozen VAE
     vae_state = torch.load(vae_path, map_location=DEVICE)
     vae = GaitVAE(in_channels=N_CHANNELS, latent_channels=LATENT_CHANNELS,
                   updrs_classes=UPDRS_CLASSES,
@@ -73,23 +72,18 @@ def main():
     for p in vae.parameters():
         p.requires_grad_(False)
 
-    # Load latent DiT
     model = DiffusionTransformerUPDRS(
         n_channels=LATENT_CHANNELS, seq_len=LATENT_TIME, embed_dim=EMBED_DIM,
         n_heads=N_HEADS, n_layers=N_LAYERS, dropout=DROPOUT,
         updrs_classes=UPDRS_CLASSES,
     ).to(DEVICE)
-    # strict=False: released checkpoints may contain the legacy (unused)
-    # laterality_emb weight; all other keys must match.
     model.load_state_dict(torch.load(model_path, map_location=DEVICE), strict=False)
     model.eval()
 
-    # Output denormalization stats
     norm = torch.load(STATS_PATH, map_location=DEVICE)
     std = norm["std"].to(DEVICE)
     mean = norm.get("mean", torch.zeros_like(std)).to(DEVICE)
 
-    # Latent normalization stats (if present)
     lat_std = None
     if os.path.exists(LATENT_NORM_PARAMS_PATH):
         lat_std = torch.load(LATENT_NORM_PARAMS_PATH, map_location=DEVICE)["std"].to(DEVICE)

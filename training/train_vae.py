@@ -58,7 +58,6 @@ def train():
         print(f"ERROR: {TRAIN_DATA_PATH} not found. Run preprocessing.preprocess_carepd_h3d first.")
         return
 
-    # Normalization from train split (sagittal channels for 6-ch; all 263 for H3D)
     train_raw = torch.from_numpy(_load_channels(TRAIN_DATA_PATH)).float()
     norm_mean = train_raw.mean(dim=(0, 2)).view(1, -1, 1)
     norm_std  = train_raw.std(dim=(0, 2)).view(1, -1, 1)
@@ -70,7 +69,6 @@ def train():
     train_loader = make_loader(TRAIN_DATA_PATH, TRAIN_LABELS_PATH, norm_mean, norm_std, shuffle=True)
     eval_loader  = make_loader(EVAL_DATA_PATH,  EVAL_LABELS_PATH,  norm_mean, norm_std, shuffle=False)
 
-    # Dataset stats for logging
     train_labels_all = torch.from_numpy(np.load(TRAIN_LABELS_PATH)).long()
     eval_labels_all  = torch.from_numpy(np.load(EVAL_LABELS_PATH)).long()
     print(f"Train windows: {len(train_raw)}  |  Eval windows: {len(np.load(EVAL_DATA_PATH))}")
@@ -176,7 +174,6 @@ def train():
                 torch.save(model.state_dict(), best_val_path)
 
         elif (epoch + 1) % 100 == 0:
-            # Per-class surrogate accuracy
             model.eval()
             per_class_correct  = {c: 0 for c in range(UPDRS_CLASSES)}
             per_class_total    = {c: 0 for c in range(UPDRS_CLASSES)}
@@ -196,7 +193,6 @@ def train():
                 acc = 100 * per_class_correct[cls] / n if n > 0 else 0
                 print(f"    UPDRS {cls}: {acc:.1f}%  ({n} samples)")
 
-    # Final save (last epoch — may not be the best; see best_val_path for that)
     os.makedirs(os.path.dirname(VAE_MODEL_PATH), exist_ok=True)
     torch.save(model.state_dict(), VAE_MODEL_PATH)
     print(f"\nFinal model (last epoch) saved to {VAE_MODEL_PATH}")

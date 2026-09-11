@@ -43,7 +43,7 @@ from config import (
     H3D_NORM_PARAMS_PATH,
 )
 
-CLIP_LEN = SEQ_LEN + 1  # process_file drops one frame (velocity diff)
+CLIP_LEN = SEQ_LEN + 1
 
 
 def walk_to_windows(pose, trans, beta, fps):

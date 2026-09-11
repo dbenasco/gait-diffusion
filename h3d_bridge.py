@@ -1,31 +1,14 @@
 """
-Metric bridge: HumanML3D (263-dim) → anatomical angles + clinical metrics.
+Bridge from the HumanML3D (263-dim) representation to anatomical angles and
+clinical metrics, used by both the training losses and the evaluation scripts.
 
-This is the glue that keeps the existing evaluation suite working on the H3D
-pipeline (see docs/superpowers/specs/2026-06-22-humanml3d-representation-design.md).
-
-Three tiers:
-
-  Tier 1 (comparable to the 6-angle runs) — `h3d_to_angles`:
-    denorm → slice the ric block [4:67] → reconstruct 22 local joint positions →
-    reuse smpl_to_angles' geometric helpers → 6/8 anatomical angles (degrees).
-    Pure torch and differentiable, so it doubles as the ROM-loss angle source.
-
-  Tier 2 (new, root motion) — `root_motion_metrics`:
-    gait speed / step length / cadence from the root velocity + foot-contact blocks.
-
-  Tier 3 (new, full body; GaitGen) — `ave`, `aamd`, `asmd`:
-    per-joint variance error, arm-swing and stooped-posture mean differences,
-    on recovered full-body joint positions.
-
-Why the ric block and not rot6d: the ric `atan2` reproduces the exact prior angle
-definition (`smpl_to_angles`), so Tier-1 stays comparable to the 6-angle runs.
-The skeleton is in process_file's canonical per-frame frame (root XZ at origin,
-yaw removed, **absolute height kept**), so joint 0 must be restored at
-`(0, root_height, 0)` — root_height is feature channel 3 — for the pelvis "up"
-vector to come out right. Angles are scale/rotation invariant, so the
-uniform-skeleton retarget inside process_file does not change them; real and synth
-share identical processing.
+Provided metrics:
+  - `h3d_to_angles`: 263-dim window → 6 sagittal leg angles (degrees), pure
+    torch and differentiable, so it also serves as the ROM-loss angle source.
+  - `h3d_to_positions22`: 263-dim window → (T, 22, 3) local joint positions.
+  - `root_motion_metrics`: gait speed / step length / cadence from the root
+    velocity and foot-contact blocks.
+  - `ave`, `aamd`, `asmd`: GAITGen distance metrics on recovered joint positions.
 
 263 layout = root(4) | ric_pos(63) | rot6d(126) | local_vel(66) | foot(4)
              root = [r_ang_vel(1), r_lin_vel_xz(2), root_height(1)]
@@ -44,13 +27,12 @@ from config import (
     H3D_BLOCKS, H3D_N_JOINTS, CAREPD_TARGET_FPS, SAG_IDX,
 )
 
-_RIC_LO, _RIC_HI = H3D_BLOCKS["ric"]     # (4, 67)
-_ROOT_HEIGHT_CH = 3                       # root_data = [r_ang_vel, l_vel_x, l_vel_z, root_y]
-_FOOT_LO, _FOOT_HI = H3D_BLOCKS["foot"]   # (259, 263)
-_RVEL_CH = 0                              # root angular velocity
-_LVEL_LO, _LVEL_HI = 1, 3                 # root linear velocity (x, z)
+_RIC_LO, _RIC_HI = H3D_BLOCKS["ric"]
+_ROOT_HEIGHT_CH = 3
+_FOOT_LO, _FOOT_HI = H3D_BLOCKS["foot"]
+_RVEL_CH = 0
+_LVEL_LO, _LVEL_HI = 1, 3
 
-# Full-body joint indices (SMPL 22-joint order, == T2M).
 _J_PELVIS, _J_NECK, _J_HEAD = 0, 12, 15
 _J_L_SHOULDER, _J_R_SHOULDER = 16, 17
 _J_L_ELBOW,    _J_R_ELBOW    = 18, 19
@@ -59,8 +41,6 @@ _J_L_WRIST,    _J_R_WRIST    = 20, 21
 ARM_JOINT_NAMES = ["L_Shoulder", "R_Shoulder", "L_Elbow", "R_Elbow", "L_Wrist", "R_Wrist"]
 _ARM_JOINTS     = [_J_L_SHOULDER, _J_R_SHOULDER, _J_L_ELBOW, _J_R_ELBOW, _J_L_WRIST, _J_R_WRIST]
 
-
-# ── Denormalization ───────────────────────────────────────────────────────────
 
 def denormalize(feat_norm, mean, std):
     """(B,263,T) normalized → denormalized. mean/std are (263,1) tensors."""
@@ -71,8 +51,6 @@ def denormalize(feat_norm, mean, std):
     return feat_norm * std + mean
 
 
-# ── Tier 1: angle bridge ──────────────────────────────────────────────────────
-
 def h3d_to_positions22(feat_denorm: torch.Tensor) -> torch.Tensor:
     """
     Denormalized (B,263,T) → (B, T, 22, 3) local joint positions.
@@ -81,12 +59,12 @@ def h3d_to_positions22(feat_denorm: torch.Tensor) -> torch.Tensor:
     (0, root_height, 0); joints 1..21 from the ric block. Differentiable.
     """
     B, C, T = feat_denorm.shape
-    root_y = feat_denorm[:, _ROOT_HEIGHT_CH:_ROOT_HEIGHT_CH + 1, :]        # (B,1,T)
+    root_y = feat_denorm[:, _ROOT_HEIGHT_CH:_ROOT_HEIGHT_CH + 1, :]
     ric = feat_denorm[:, _RIC_LO:_RIC_HI, :].reshape(B, H3D_N_JOINTS - 1, 3, T)
     zeros = torch.zeros_like(root_y)
-    root = torch.stack([zeros, root_y, zeros], dim=2)                     # (B,1,3,T)
-    pos = torch.cat([root, ric], dim=1)                                   # (B,22,3,T)
-    return pos.permute(0, 3, 1, 2).contiguous()                          # (B,T,22,3)
+    root = torch.stack([zeros, root_y, zeros], dim=2)
+    pos = torch.cat([root, ric], dim=1)
+    return pos.permute(0, 3, 1, 2).contiguous()
 
 
 def _angles_from_joints(joints: torch.Tensor) -> torch.Tensor:
@@ -96,8 +74,8 @@ def _angles_from_joints(joints: torch.Tensor) -> torch.Tensor:
       [L_Hip_Flex, L_Hip_Abd, R_Hip_Flex, R_Hip_Abd,
        L_Knee, R_Knee, L_Ankle, R_Ankle]
     """
-    l_hip = s2a._hip_angles(joints, s2a._L_HIP, s2a._L_KNEE)              # (N,2)
-    r_hip = s2a._hip_angles(joints, s2a._R_HIP, s2a._R_KNEE)             # (N,2)
+    l_hip = s2a._hip_angles(joints, s2a._L_HIP, s2a._L_KNEE)
+    r_hip = s2a._hip_angles(joints, s2a._R_HIP, s2a._R_KNEE)
     l_knee = s2a._flex_angle(joints[:, s2a._L_HIP],  joints[:, s2a._L_KNEE],  joints[:, s2a._L_ANKLE])
     r_knee = s2a._flex_angle(joints[:, s2a._R_HIP],  joints[:, s2a._R_KNEE],  joints[:, s2a._R_ANKLE])
     l_ank  = s2a._flex_angle(joints[:, s2a._L_KNEE], joints[:, s2a._L_ANKLE], joints[:, s2a._L_FOOT]) - 90.0
@@ -106,7 +84,7 @@ def _angles_from_joints(joints: torch.Tensor) -> torch.Tensor:
         l_hip, r_hip,
         l_knee.unsqueeze(1), r_knee.unsqueeze(1),
         l_ank.unsqueeze(1),  r_ank.unsqueeze(1),
-    ], dim=1)                                                             # (N,8)
+    ], dim=1)
 
 
 def h3d_to_angles(feat, mean=None, std=None, sagittal_only=True) -> torch.Tensor:
@@ -125,12 +103,12 @@ def h3d_to_angles(feat, mean=None, std=None, sagittal_only=True) -> torch.Tensor
     feat = denormalize(feat, mean, std) if mean is not None else feat
 
     B, _, T = feat.shape
-    pos = h3d_to_positions22(feat)                          # (B,T,22,3)
+    pos = h3d_to_positions22(feat)
     joints = pos.reshape(B * T, H3D_N_JOINTS, 3)
-    ang = _angles_from_joints(joints).reshape(B, T, 8)      # (B,T,8)
-    ang = ang.permute(0, 2, 1).contiguous()                # (B,8,T)
+    ang = _angles_from_joints(joints).reshape(B, T, 8)
+    ang = ang.permute(0, 2, 1).contiguous()
     if sagittal_only:
-        ang = ang[:, SAG_IDX, :]                            # (B,6,T)
+        ang = ang[:, SAG_IDX, :]
     return ang
 
 
@@ -144,13 +122,11 @@ def h3d_to_arm_timeseries(feat_denorm: torch.Tensor) -> torch.Tensor:
     """
     if not torch.is_tensor(feat_denorm):
         feat_denorm = torch.as_tensor(feat_denorm, dtype=torch.float32)
-    pos      = h3d_to_positions22(feat_denorm)           # (B, T, 22, 3)
-    pelvis_z = pos[:, :, _J_PELVIS, 2]                  # (B, T)
+    pos      = h3d_to_positions22(feat_denorm)
+    pelvis_z = pos[:, :, _J_PELVIS, 2]
     channels = [pos[:, :, j, 2] - pelvis_z for j in _ARM_JOINTS]
-    return torch.stack(channels, dim=1)                  # (B, 6, T)
+    return torch.stack(channels, dim=1)
 
-
-# ── Tier 2: root-motion clinical metrics ──────────────────────────────────────
 
 def root_motion_metrics(feat_denorm, fps: float = CAREPD_TARGET_FPS) -> dict:
     """
@@ -167,25 +143,23 @@ def root_motion_metrics(feat_denorm, fps: float = CAREPD_TARGET_FPS) -> dict:
     """
     x = feat_denorm.detach().cpu().numpy() if torch.is_tensor(feat_denorm) else np.asarray(feat_denorm)
     B, _, T = x.shape
-    lin_vel = x[:, _LVEL_LO:_LVEL_HI, :]                    # (B,2,T)
-    distance = np.linalg.norm(lin_vel, axis=1).sum(axis=1) # (B,)
+    lin_vel = x[:, _LVEL_LO:_LVEL_HI, :]
+    distance = np.linalg.norm(lin_vel, axis=1).sum(axis=1)
     speed = distance * fps / T
 
-    foot = x[:, _FOOT_LO:_FOOT_HI, :] > 0.5                 # (B,4,T) bool
-    left  = foot[:, 0:2, :].any(axis=1)                    # (B,T)
+    foot = x[:, _FOOT_LO:_FOOT_HI, :] > 0.5
+    left  = foot[:, 0:2, :].any(axis=1)
     right = foot[:, 2:4, :].any(axis=1)
-    def _onsets(contact):                                   # rising edges per window
+    def _onsets(contact):
         rises = (~contact[:, :-1]) & contact[:, 1:]
         return rises.sum(axis=1)
-    n_steps = _onsets(left) + _onsets(right)               # (B,)
+    n_steps = _onsets(left) + _onsets(right)
     duration = T / fps
     cadence = n_steps / duration * 60.0
     step_len = distance / np.maximum(n_steps, 1)
     return {"speed": speed, "cadence": cadence,
             "step_length": step_len, "distance": distance}
 
-
-# ── Tier 3: GaitGen full-body metrics ─────────────────────────────────────────
 
 def _to_positions_np(feat_denorm) -> np.ndarray:
     """(B,263,T) → (B,T,22,3) numpy via the same local reconstruction."""
@@ -196,8 +170,8 @@ def _to_positions_np(feat_denorm) -> np.ndarray:
 
 def per_joint_temporal_std(positions: np.ndarray) -> np.ndarray:
     """(B,T,22,3) → (B,22) per-joint temporal std (L2 over xyz of per-axis std)."""
-    std_axis = positions.std(axis=1)                       # (B,22,3)
-    return np.linalg.norm(std_axis, axis=-1)               # (B,22)
+    std_axis = positions.std(axis=1)
+    return np.linalg.norm(std_axis, axis=-1)
 
 
 def ave(real_feat, synth_feat):
@@ -206,8 +180,8 @@ def ave(real_feat, synth_feat):
     std averaged over each set, L2 difference per joint, averaged over joints.
     Returns (overall_scalar, per_joint (22,)).
     """
-    r = per_joint_temporal_std(_to_positions_np(real_feat)).mean(axis=0)   # (22,)
-    s = per_joint_temporal_std(_to_positions_np(synth_feat)).mean(axis=0)  # (22,)
+    r = per_joint_temporal_std(_to_positions_np(real_feat)).mean(axis=0)
+    s = per_joint_temporal_std(_to_positions_np(synth_feat)).mean(axis=0)
     per_joint = np.abs(r - s)
     return float(per_joint.mean()), per_joint
 
@@ -223,10 +197,10 @@ def arm_swing_range_t(positions: torch.Tensor) -> torch.Tensor:
     out = []
     for w, s in ((_J_L_WRIST, _J_L_SHOULDER), (_J_R_WRIST, _J_R_SHOULDER)):
         dist = torch.linalg.norm(positions[:, :, w, :] - positions[:, :, s, :],
-                                 dim=-1)                                # (B,T)
-        out.append(dist.max(dim=1).values - dist.min(dim=1).values)    # (B,)
-    stacked = torch.stack(out, dim=0)                                  # (2, B)
-    return stacked.min(dim=0).values                                   # (B,)
+                                 dim=-1)
+        out.append(dist.max(dim=1).values - dist.min(dim=1).values)
+    stacked = torch.stack(out, dim=0)
+    return stacked.min(dim=0).values
 
 
 def trunk_inclination_t(positions: torch.Tensor) -> torch.Tensor:
@@ -235,10 +209,10 @@ def trunk_inclination_t(positions: torch.Tensor) -> torch.Tensor:
     vertical: angle between the pelvis→neck vector and the +Y axis, averaged over
     the window. Same definition as the GaitGen `asmd` metric.
     """
-    v = positions[:, :, _J_NECK, :] - positions[:, :, _J_PELVIS, :]    # (B,T,3)
-    horiz = torch.linalg.norm(v[..., [0, 2]], dim=-1)                  # (B,T)
-    vert = v[..., 1]                                                   # (B,T)
-    incl = torch.rad2deg(torch.atan2(horiz, vert))                    # (B,T)
+    v = positions[:, :, _J_NECK, :] - positions[:, :, _J_PELVIS, :]
+    horiz = torch.linalg.norm(v[..., [0, 2]], dim=-1)
+    vert = v[..., 1]
+    incl = torch.rad2deg(torch.atan2(horiz, vert))
     return incl.mean(dim=1)
 
 

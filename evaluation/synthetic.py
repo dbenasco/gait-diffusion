@@ -38,8 +38,6 @@ CLS_NAMES = {0: "Normal", 1: "Mild", 2: "Moderate", 3: "Severe"}
 DTW_BAND = 0.10
 
 
-# ── DTW (optional numba acceleration) ─────────────────────────────────────────
-
 def _dtw_1d(a, b, window):
     """Sakoe-Chiba DTW, normalized by path length. Lower = better."""
     n, m = len(a), len(b)
@@ -70,13 +68,11 @@ try:
 
     _dtw_1d_kernel(np.zeros(4), np.zeros(4), 2)
 
-    def _dtw_1d(a, b, window):  # noqa: F811
+    def _dtw_1d(a, b, window):
         return float(_dtw_1d_kernel(a.astype(np.float64), b.astype(np.float64), int(window)))
 except ImportError:
     pass
 
-
-# ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _to_tensor(x):
     return torch.from_numpy(np.ascontiguousarray(x).astype(np.float32))
@@ -118,8 +114,6 @@ def _load_vae():
     return vae, norm["mean"].float(), norm["std"].float()
 
 
-# ── Main ──────────────────────────────────────────────────────────────────────
-
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--n_samples", type=int, default=300,
@@ -139,7 +133,6 @@ def main():
     real = np.load(EVAL_DATA_PATH)
     real_labels = np.load(EVAL_LABELS_PATH)
 
-    # Subsample synthetic data to n_samples per class (fixed seed for reproducibility).
     rng = np.random.default_rng(42)
     keep = np.concatenate([
         rng.choice(np.where(synth_labels == c)[0],

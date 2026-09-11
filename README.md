@@ -48,8 +48,11 @@ The SMPL model is required for forward kinematics. Place it at the path below
 ## Data layout (expected on disk)
 
 The raw CARE-PD dataset is third-party and license-restricted, so it is not
-distributed with this repository. Place the downloaded files in the standard
-folder layout below; the pipeline reads these paths directly from `config.py`:
+distributed with this repository. Place the downloaded files in the layout below;
+the pipeline reads these paths directly from `config.py`.
+
+CARE-PD: *A Multi-Site Anonymized Clinical Dataset for Parkinson's Disease Gait
+Assessment* (Adeli et al., NeurIPS 2025) — https://arxiv.org/abs/2510.04312
 
 ```
 gait-diffusion/

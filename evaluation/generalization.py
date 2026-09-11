@@ -97,7 +97,6 @@ def main():
     print("  Generalization — Random Forest on VAE latent features")
     print("=" * 60)
 
-    # TRTR — 10-fold cross-validation on real latents.
     trtr_preds = np.zeros(len(real_labels), dtype=int)
     skf = StratifiedKFold(n_splits=args.n_folds, shuffle=True, random_state=42)
     for train_idx, test_idx in skf.split(real_lats, real_labels):
@@ -106,7 +105,6 @@ def main():
     trtr_overall = _report("TRTR — Train on Real, Test on Real (10-fold CV)",
                            trtr_preds, real_labels)
 
-    # TRTS — train on real, test on synthetic.
     clf = _rf().fit(real_lats, real_labels)
     trts_preds = clf.predict(synth_lats)
     trts_overall = _report("TRTS — Train on Real, Test on Synthetic", trts_preds, synth_labels)
